@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Map</title>
+</head>
+<body style="margin: 0; padding: 0; overflow: hidden; background: #1e3250;">
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let mapInfo = null;
+        let chunks = new Map();
+        let offsetX = 0;
+        let offsetY = 0;
+        let zoom = 1;
+        let isDragging = false;
+        let dragX = 0;
+        let dragY = 0;
+        let needsRender = true;
+
+        async function loadInfo() {
+            const res = await fetch('chunks/info.json');
+            mapInfo = await res.json();
+            needsRender = true;
+        }
+
+        async function getChunk(x, z) {
+            const key = `${x}_${z}`;
+            if (chunks.has(key)) return chunks.get(key);
+
+            try {
+                const img = new Image();
+                img.onload = () => {
+                    chunks.set(key, img);
+                    needsRender = true;
+                };
+                img.src = `chunks/chunk_${x}_${z}.png`;
+            } catch (e) {}
+        }
+
+        function render() {
+            ctx.fillStyle = '#1e3250';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (!mapInfo) return;
+
+            const chunkSize = mapInfo.chunk_size * zoom;
+
+            for (const chunk_info of mapInfo.chunks) {
+                const chunk_x = chunk_info.x;
+                const chunk_z = chunk_info.z;
+                
+                const screen_x = offsetX + chunk_x * 2 * zoom;
+                const screen_y = offsetY + chunk_z * 2 * zoom;
+
+                if (screen_x + chunkSize < 0 || screen_x > canvas.width ||
+                    screen_y + chunkSize < 0 || screen_y > canvas.height) {
+                    continue;
+                }
+
+                const chunk = chunks.get(`${chunk_x}_${chunk_z}`);
+                
+                if (chunk) {
+                    ctx.drawImage(chunk, screen_x, screen_y, chunkSize, chunkSize);
+                } else {
+                    getChunk(chunk_x, chunk_z);
+                }
+            }
+        }
+
+        function update() {
+            if (needsRender) {
+                render();
+                needsRender = false;
+            }
+            requestAnimationFrame(update);
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragX = e.clientX;
+            dragY = e.clientY;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                offsetX += e.clientX - dragX;
+                offsetY += e.clientY - dragY;
+                dragX = e.clientX;
+                dragY = e.clientY;
+                needsRender = true;
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Touch support
+        let touchStartX = 0, touchStartY = 0;
+        let lastTouchDistance = 0;
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                isDragging = false;
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                lastTouchDistance = Math.sqrt(dx*dx + dy*dy);
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1 && isDragging) {
+                offsetX += e.touches[0].clientX - touchStartX;
+                offsetY += e.touches[0].clientY - touchStartY;
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                needsRender = true;
+            } else if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                if (lastTouchDistance > 0) {
+                    const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    const zoomFactor = distance / lastTouchDistance;
+                    const oldZoom = zoom;
+                    zoom *= zoomFactor;
+                    zoom = Math.max(0.1, Math.min(zoom, 10));
+
+                    offsetX = centerX - (centerX - offsetX) * (zoom / oldZoom);
+                    offsetY = centerY - (centerY - offsetY) * (zoom / oldZoom);
+                    needsRender = true;
+                }
+                lastTouchDistance = distance;
+            }
+        });
+
+        canvas.addEventListener('touchend', () => {
+            isDragging = false;
+            lastTouchDistance = 0;
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            const oldZoom = zoom;
+            zoom *= zoomFactor;
+            zoom = Math.max(0.1, Math.min(zoom, 10));
+
+            offsetX = e.clientX - (e.clientX - offsetX) * (zoom / oldZoom);
+            offsetY = e.clientY - (e.clientY - offsetY) * (zoom / oldZoom);
+            needsRender = true;
+        });
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            needsRender = true;
+        });
+
+        loadInfo();
+        update();
+    </script>
+</body>
+</html>
